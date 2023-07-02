@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+
+    <script src='https://unpkg.com/bignumber.js'></script>
+    <script src='https://unpkg.com/cbor-web'></script>
+
+    <script>
+        async function create_credentials() {
+
+            const publicKeyCredentialCreationOptions = {
+                challenge: Uint8Array.from(
+                    "randomstring", c => c.charCodeAt(0)),
+                rp: {
+                    name: "Duo Security",
+                    id: "localhost",
+                },
+                user: {
+                    id: Uint8Array.from(
+                        "UZSL85T9AFC", c => c.charCodeAt(0)),
+                    name: "lee@webauthn.guide",
+                    displayName: "Lee",
+                },
+                pubKeyCredParams: [{alg: -7, type: "public-key"}],
+                authenticatorSelection: {
+                    authenticatorAttachment: "cross-platform",
+                },
+                timeout: 60000,
+                attestation: "direct"
+            };
+
+            const credential = await navigator.credentials.create({
+                publicKey: publicKeyCredentialCreationOptions
+            });
+            // console.log(credential);
+            // note: a CBOR decoder library is needed here.
+            const decodedAttestationObj = cbor.decode(
+                credential.response.attestationObject);
+
+            //console.log(decodedAttestationObj);
+            const {authData} = decodedAttestationObj;
+
+// get the length of the credential ID
+            const dataView = new DataView(
+                new ArrayBuffer(2));
+            const idLenBytes = authData.slice(53, 55);
+            idLenBytes.forEach(
+                (value, index) => dataView.setUint8(
+                    index, value));
+            const credentialIdLength = dataView.getUint16();
+
+// get the credential ID
+            const credentialId = authData.slice(
+                55, 55 + credentialIdLength);
+
+// get the public key object
+            const publicKeyBytes = authData.slice(
+                55 + credentialIdLength);
+// 1: The 1 field describes the key type. The value of 2 indicates that the key type is in the Elliptic Curve format.
+// 3: The 3 field describes the algorithm used to generate authentication signatures. The -7 value indicates this authenticator will be using ES256.
+// -1: The -1 field describes this key's "curve type". The value 1 indicates the that this key uses the "P-256" curve.
+// -2: The -2 field describes the x-coordinate of this public key.
+// -3: The -3 field describes the y-coordinate of this public key.
+            // https://www.iana.org/assignments/cose/cose.xhtml#algorithms
+// the publicKeyBytes are encoded again as CBOR
+            const publicKeyObject = cbor.decode(
+                publicKeyBytes);
+            console.log("publicKey", publicKeyObject)
+// 0: {1 => 2}
+// 1: {3 => -7}
+// 2: {-1 => 1}
+// 3: {-2 => Uint8Array(32)}
+// 4: {-3 => Uint8Array(32)}
+
+            const publicKeyCredentialRequestOptions = {
+                challenge: Uint8Array.from(
+                    "another_random_str", c => c.charCodeAt(0)),
+                allowCredentials: [{
+                    id: credentialId,
+                    type: 'public-key',
+                }],
+                transport: ['hybrid', 'internal'],
+                timeout: 60000,
+            }
+
+
+            const credential2 = await navigator.credentials.get({
+                publicKey: publicKeyCredentialRequestOptions
+            });
+            // console.log("credentials2",credential2)
+
+            // The server retrieves the public key object associated with the user
+            // The server uses the public key to verify the signature, which was generated using the authenticatorData bytes and a SHA-256 hash of the clientDataJSON
+
+            // const signedData = (
+            //     authenticatorDataBytes +
+            //     hashedClientDataJSON);
+
+            // https://github.com/duo-labs/py_webauthn/blob/master/webauthn/authentication/verify_authentication_response.py
+            //     ECDSA_SHA_256 = -7
+
+            // ArrayBuffer
+            const clientDataJSONHash = await crypto.subtle.digest('SHA-256', credential2.response.clientDataJSON);
+//            console.log(clientDataJSONHash);
+
+            //const hashArray = Array.from(new Uint8Array(clientDataJSONHash));
+            // convert bytes to hex string
+            // const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            // console.log(hashHex);
+
+            const signedData = new Uint8Array([
+                ...new Uint8Array(credential2.response.authenticatorData), // 37 bytes
+                ...new Uint8Array(clientDataJSONHash), // 32 bytes
+            ]); // ==> 69 bytes
+
+            console.log("signature", credential2.response.signature);
+            console.log("signedData", signedData); // 71 byte
+            // https://transactionfee.info/charts/bitcoin-script-ecdsa-length/
+
+
+        }
+
+    </script>
+</head>
+<body>
+
+<button onclick="create_credentials()">create_credentials</button>
+
+</body>
+</html>
